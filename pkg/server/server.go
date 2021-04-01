@@ -13,6 +13,7 @@ import (
 
 	"github.com/andres-erbsen/clock"
 	bundlev1 "github.com/spiffe/spire-api-sdk/proto/spire/api/server/bundle/v1"
+	"github.com/spiffe/spire-api-sdk/proto/spire/api/types"
 	server_util "github.com/spiffe/spire/cmd/spire-server/util"
 	"github.com/spiffe/spire/pkg/common/health"
 	"github.com/spiffe/spire/pkg/common/hostservices/metricsservice"
@@ -396,6 +397,53 @@ func (s *Server) waitForTestDial(ctx context.Context) error {
 
 // Status is used as a top-level health check for the Server.
 func (s *Server) Status() (interface{}, error) {
+	state, err := s.healthTest()
+	if err != nil {
+		return nil, err
+	}
+
+	if s.IsLive() {
+		fmt.Print("IsLive() Works!")
+	}
+
+	if s.IsReady() {
+		fmt.Print("IsReady() Works!")
+	}
+
+	return state, nil
+}
+
+func (s *Server) IsLive() bool {
+	state, err := s.healthTest()
+
+	if err != nil {
+		s.config.Log.WithError(err).Warn("server not live")
+		return false
+	}
+
+	if state.RefreshHint > 0 {
+		return true
+	}
+
+	return false
+}
+
+func (s *Server) IsReady() bool {
+	state, err := s.healthTest()
+
+	if err != nil {
+		s.config.Log.WithError(err).Warn("server not ready")
+		return false
+	}
+
+	if state.RefreshHint != 0 && state.SequenceNumber != 0 {
+		return false
+	}
+
+	return false
+}
+
+func (s *Server) healthTest() (*types.Bundle, error) {
 	client, err := server_util.NewServerClient(s.config.BindUDSAddress.Name)
 	if err != nil {
 		return nil, errors.New("cannot create registration client")
@@ -408,11 +456,17 @@ func (s *Server) Status() (interface{}, error) {
 	// **could** be problematic if the Upstream CA signing process is lengthy.
 	// As currently coded however, the API isn't served until after
 	// the server CA has been signed by upstream.
-	if _, err := bundleClient.GetBundle(context.Background(), &bundlev1.GetBundleRequest{}); err != nil {
+	b, err := bundleClient.GetBundle(context.Background(), &bundlev1.GetBundleRequest{
+		OutputMask: &types.BundleMask{
+			RefreshHint:     false,
+			SequenceNumber:  false,
+			X509Authorities: false,
+			JwtAuthorities:  false,
+		},
+	})
+	if err != nil {
 		return nil, errors.New("unable to fetch bundle")
 	}
 
-	return health.Details{
-		Message: "successfully fetched bundle",
-	}, nil
+	return b, nil
 }
