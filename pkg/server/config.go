@@ -68,6 +68,9 @@ type Config struct {
 	// HealthChecks provides the configuration for health monitoring
 	HealthChecks health.Config
 
+	// HealthChecker executes the health checks
+	HealthChecker health.Checker
+
 	// CAKeyType is the key type used for the X509 and JWT signing keys
 	CAKeyType keymanager.KeyType
 

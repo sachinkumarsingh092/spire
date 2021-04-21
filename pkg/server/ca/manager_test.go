@@ -19,6 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/spire/pkg/common/health"
 	"github.com/spiffe/spire/pkg/common/telemetry"
 	telemetry_server "github.com/spiffe/spire/pkg/common/telemetry/server"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
@@ -677,6 +678,34 @@ func (s *ManagerSuite) TestAlternateKeyTypes() {
 			testCase.checkJWTKey(t, s.currentJWTKey().Signer)
 		})
 	}
+}
+
+func (s *ManagerSuite) TestManagerHealthChecks() {
+	// Successful health check
+	s.initSelfSignedManager()
+	s.Equal(map[string]health.State{
+		"server.ca.manager": {
+			Live:         true,
+			Ready:        true,
+			ReadyDetails: managerHealthDetails{},
+			LiveDetails:  managerHealthDetails{},
+		},
+	}, s.healthChecker.RunChecks())
+
+	// Failed health check (failed rotations greater than threshold)
+	s.m.failedRotationNum = failedRotationThreshold + 1
+	s.Equal(map[string]health.State{
+		"server.ca.manager": {
+			Live:  false,
+			Ready: false,
+			ReadyDetails: managerHealthDetails{
+				RotationErr: "rotations exceed the threshold number of failures",
+			},
+			LiveDetails: managerHealthDetails{
+				RotationErr: "rotations exceed the threshold number of failures",
+			},
+		},
+	}, s.healthChecker.RunChecks())
 }
 
 func (s *ManagerSuite) initSelfSignedManager() {

@@ -61,6 +61,22 @@ type ServableChecker interface {
 	ListenAndServe(ctx context.Context) error
 }
 
+// checkableWrapper wraps Checkable in something that conforms to health.ICheckable
+type checkableWrapper struct {
+	checkable Checkable
+}
+
+type checker struct {
+	config Config
+
+	server *http.Server
+
+	hc    *health.Health
+	mutex sync.Mutex // Mutex protects non-threadsafe hc
+
+	log logrus.FieldLogger
+}
+
 func NewChecker(config Config, log logrus.FieldLogger) ServableChecker {
 	hc := health.New()
 
@@ -84,17 +100,6 @@ func NewChecker(config Config, log logrus.FieldLogger) ServableChecker {
 	}
 
 	return c
-}
-
-type checker struct {
-	config Config
-
-	server *http.Server
-
-	hc    *health.Health
-	mutex sync.Mutex // Mutex protects non-threadsafe hc
-
-	log logrus.FieldLogger
 }
 
 func (c *checker) AddCheck(name string, checkable Checkable) error {
@@ -147,6 +152,22 @@ func (c *checker) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
+// LiveState returns the global live state and details.
+func (c *checker) LiveState() (bool, interface{}) {
+	states, _, _ := c.hc.State()
+	live, _, details, _ := c.checkStates(states)
+
+	return live, details
+}
+
+// ReadyState returns the global ready state and details.
+func (c *checker) ReadyState() (bool, interface{}) {
+	states, _, _ := c.hc.State()
+	_, ready, _, details := c.checkStates(states)
+
+	return ready, details
+}
+
 // WaitForTestDial tries to create a client connection to the given target
 // with a blocking dial and a timeout specified in testDialTimeout.
 // Nothing is done with the connection, which is just closed in case it
@@ -172,20 +193,19 @@ func WaitForTestDial(ctx context.Context, addr *net.UnixAddr) {
 	conn.Close()
 }
 
-// LiveState returns the global live state and details.
-func (c *checker) LiveState() (bool, interface{}) {
-	states, _, _ := c.hc.State()
-	live, _, details, _ := c.checkStates(states)
-
-	return live, details
-}
-
-// ReadyState returns the global ready state and details.
-func (c *checker) ReadyState() (bool, interface{}) {
-	states, _, _ := c.hc.State()
-	_, ready, _, details := c.checkStates(states)
-
-	return ready, details
+func (c checkableWrapper) Status() (interface{}, error) {
+	state := c.checkable.CheckHealth()
+	var err error
+	switch {
+	case state.Ready && state.Live:
+	case state.Ready && !state.Live:
+		err = errors.New("subsystem is not live")
+	case !state.Ready && state.Live:
+		err = errors.New("subsystem is not ready")
+	case !state.Ready && !state.Live:
+		err = errors.New("subsystem is not live or ready")
+	}
+	return state, err
 }
 
 func (c *checker) checkStates(states map[string]health.State) (bool, bool, interface{}, interface{}) {
@@ -234,24 +254,4 @@ func (c *checker) readyHandler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(details)
-}
-
-// checkableWrapper wraps Checkable in something that conforms to health.ICheckable
-type checkableWrapper struct {
-	checkable Checkable
-}
-
-func (c checkableWrapper) Status() (interface{}, error) {
-	state := c.checkable.CheckHealth()
-	var err error
-	switch {
-	case state.Ready && state.Live:
-	case state.Ready && !state.Live:
-		err = errors.New("subsystem is not live")
-	case !state.Ready && state.Live:
-		err = errors.New("subsystem is not ready")
-	case !state.Ready && !state.Live:
-		err = errors.New("subsystem is not live or ready")
-	}
-	return state, err
 }

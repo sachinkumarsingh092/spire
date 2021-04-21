@@ -8,17 +8,20 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/spire/pkg/common/health"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 	"github.com/spiffe/spire/test/fakes/fakedatastore"
+	"github.com/spiffe/spire/test/fakes/fakehealthchecker"
 	"github.com/stretchr/testify/suite"
 )
 
 type ServerTestSuite struct {
 	suite.Suite
-	server *Server
-	ds     *fakedatastore.DataStore
-	stdout *bytes.Buffer
+	server        *Server
+	ds            *fakedatastore.DataStore
+	stdout        *bytes.Buffer
+	healthChecker *fakehealthchecker.Checker
 }
 
 func (suite *ServerTestSuite) SetupTest() {
@@ -32,10 +35,14 @@ func (suite *ServerTestSuite) SetupTest() {
 	logger.Out = suite.stdout
 	logger.Level = logrusLevel
 
+	suite.healthChecker = fakehealthchecker.New()
+
 	suite.server = New(Config{
-		Log:         logger,
-		TrustDomain: spiffeid.RequireTrustDomainFromString("example.org"),
+		Log:           logger,
+		TrustDomain:   spiffeid.RequireTrustDomainFromString("example.org"),
+		HealthChecker: suite.healthChecker,
 	})
+
 }
 
 func TestServerTestSuite(t *testing.T) {
@@ -151,4 +158,18 @@ func (suite *ServerTestSuite) TestValidateTrustDomain() {
 	err = suite.server.validateTrustDomain(ctx, ds)
 	suite.NoError(err)
 	suite.Require().Contains(suite.stdout.String(), invalidSpiffeIDAttestedNode)
+}
+
+func (suite *ServerTestSuite) TestServerHealthChecks() {
+	// Successful health check
+	suite.Equal(map[string]health.State{
+		"server": {
+			Live:         true,
+			Ready:        true,
+			ReadyDetails: serverHealthDetails{},
+			LiveDetails:  serverHealthDetails{},
+		},
+	}, suite.healthChecker.RunChecks())
+
+	// TODO: Failed health check
 }
